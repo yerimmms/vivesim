@@ -1,0 +1,18 @@
+[project]
+cache = false
+
+[UI]
+name = "CSV Agent Explorer"
+layout = "wide"
+default_theme = "dark"
+cot = "full"
+
+[features]
+unsafe_allow_html = false
+latex = false
+
+[features.spontaneous_file_upload]
+enabled = false
+
+[meta]
+generated_by = "2.10.0"

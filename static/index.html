@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSV Agent Explorer</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/vendor/plotly.min.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="workspace-pane">
+        <header class="workspace-header">
+          <div>
+            <p class="eyebrow">Workspace</p>
+            <h1>CSV Agent Explorer</h1>
+            <p class="subtitle">
+              Register up to five CSV files, switch between them in the table workspace,
+              and target a file in chat with <code>@filename</code>-style references such as
+              <code>@sales_2025</code> or <code>@"Sales Q1.csv"</code>.
+            </p>
+          </div>
+          <div class="toolbar">
+            <button id="table-tab" class="tab-button active" type="button">Table</button>
+            <button id="chart-tab" class="tab-button" type="button" disabled>Chart</button>
+            <button id="sync-btn" class="ghost-button" type="button">Sync</button>
+          </div>
+        </header>
+
+        <section id="file-manager" class="file-manager-panel"></section>
+
+        <section id="summary-panel" class="summary-panel">
+          <div class="empty-summary">Upload a CSV in the chat to populate this workspace.</div>
+        </section>
+
+        <section id="status-banner" class="status-banner">Waiting for a dataset.</section>
+
+        <section id="view-container" class="view-container">
+          <div id="empty-state" class="empty-state">
+            <h2>No CSV files loaded</h2>
+            <p>
+              Upload one or more CSV files to begin. The table view lets you switch between
+              registered files, review the cleaned data, and page through rows. The chart view
+              reflects the active file. Mention a file in chat with its <code>@alias</code> to
+              target it directly.
+            </p>
+          </div>
+
+          <div id="table-view" class="view hidden"></div>
+          <div id="chart-view" class="view hidden"></div>
+        </section>
+      </section>
+
+      <div
+        id="shell-divider"
+        class="shell-divider"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panes"
+        tabindex="0"
+      ></div>
+
+      <section class="chat-pane">
+        <header class="chat-header">
+          <p class="eyebrow">AI Chat</p>
+          <h2>Chainlit analyst</h2>
+        </header>
+        <iframe id="chainlit-frame" title="Chainlit chat" src="/chainlit"></iframe>
+      </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
