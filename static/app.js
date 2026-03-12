@@ -469,6 +469,89 @@ function renderChartError(message) {
   `;
 }
 
+function resolveChartControlColumns(chartPayload) {
+  const controlColumns = safeArray(chartPayload?.controls?.columns);
+  if (controlColumns.length) return controlColumns;
+  return safeArray(chartPayload?.columns);
+}
+
+function renderChartControls(chartPayload) {
+  const controlsContainer = document.createElement("section");
+  controlsContainer.className = "chart-controls-shell";
+  controlsContainer.setAttribute("aria-label", "Chart controls");
+
+  const selectableColumns = resolveChartControlColumns(chartPayload);
+  const selectedY = chartPayload?.controls?.selected_y || "";
+  const selectedColor = chartPayload?.controls?.selected_color || "";
+  const selectedChartType = chartPayload?.controls?.selected_chart_type || "";
+  const chartTypes = safeArray(chartPayload?.controls?.chart_types).length
+    ? safeArray(chartPayload?.controls?.chart_types)
+    : ["bar", "line", "scatter"];
+
+  const canControl = selectableColumns.length > 0;
+  const disabledAttr = canControl ? "" : "disabled";
+  const helperText = canControl
+    ? "Choose axes/style and apply to redraw the chart."
+    : "컨트롤 가능한 컬럼 정보가 없어 차트 설정을 변경할 수 없습니다.";
+
+  const columnOptions = selectableColumns.length
+    ? selectableColumns
+        .map(
+          (column) =>
+            `<option value="${escapeHtml(column)}" ${selectedY === column ? "selected" : ""}>${escapeHtml(column)}</option>`,
+        )
+        .join("")
+    : '<option value="">No columns available</option>';
+
+  const colorOptions = selectableColumns.length
+    ? ['<option value="">None</option>']
+        .concat(
+          selectableColumns.map(
+            (column) =>
+              `<option value="${escapeHtml(column)}" ${selectedColor === column ? "selected" : ""}>${escapeHtml(column)}</option>`,
+          ),
+        )
+        .join("")
+    : '<option value="">No columns available</option>';
+
+  const chartTypeOptions = chartTypes
+    .map(
+      (type) =>
+        `<option value="${escapeHtml(type)}" ${selectedChartType === type ? "selected" : ""}>${escapeHtml(type)}</option>`,
+    )
+    .join("");
+
+  controlsContainer.innerHTML = `
+    <div class="chart-controls-grid">
+      <label class="chart-control-field">
+        <span>y</span>
+        <select data-chart-control="y" aria-label="Chart Y axis column" ${disabledAttr}>
+          ${columnOptions}
+        </select>
+      </label>
+      <label class="chart-control-field">
+        <span>color</span>
+        <select data-chart-control="color" aria-label="Chart color grouping column" ${disabledAttr}>
+          ${colorOptions}
+        </select>
+      </label>
+      <label class="chart-control-field">
+        <span>chart type</span>
+        <select data-chart-control="chart-type" aria-label="Chart type" ${disabledAttr}>
+          ${chartTypeOptions}
+        </select>
+      </label>
+      <div class="chart-control-actions" aria-label="Chart control actions">
+        <button class="table-option" type="button" data-chart-action="apply" ${disabledAttr}>Apply</button>
+        <button class="table-option" type="button" data-chart-action="reset" ${disabledAttr}>Reset</button>
+      </div>
+    </div>
+    <p class="chart-control-help ${canControl ? "" : "is-disabled"}">${escapeHtml(helperText)}</p>
+  `;
+
+  chartView.appendChild(controlsContainer);
+}
+
 function renderChart(chartPayload) {
   if (!chartPayload || !chartPayload.figure) {
     chartView.innerHTML = "";
@@ -490,6 +573,7 @@ function renderChart(chartPayload) {
   };
 
   chartView.innerHTML = "";
+  renderChartControls(chartPayload);
   const plotContainer = document.createElement("div");
   plotContainer.id = "plot-container";
   plotContainer.className = "plot-container";
@@ -736,6 +820,26 @@ chartView.addEventListener("change", (event) => {
   }
 
   notifyChartOptionsChanged({ [optionName]: value });
+};
+                           
+chartView.addEventListener("click", (event) => {
+  const actionElement = event.target?.closest?.("[data-chart-action]");
+  const action = actionElement?.dataset?.chartAction;
+  if (!action) return;
+
+  if (action === "apply") {
+    const payload = {
+      y: chartView.querySelector('[data-chart-control="y"]')?.value || null,
+      color: chartView.querySelector('[data-chart-control="color"]')?.value || null,
+      chart_type: chartView.querySelector('[data-chart-control="chart-type"]')?.value || null,
+    };
+    sendMessageToChainlit({ type: "CHART_CONTROLS_APPLY", payload });
+    return;
+  }
+
+  if (action === "reset") {
+    sendMessageToChainlit({ type: "CHART_CONTROLS_RESET", payload: {} });
+  }
 });
 
 syncButton.addEventListener("click", requestSync);
