@@ -37,8 +37,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-
-
 function renderStatus(statusText, badges) {
   const normalizedStatus = statusText || "Ready";
   const safeBadges = safeArray(badges);
@@ -78,6 +76,39 @@ function sendMessageToChainlit(message) {
   if (!iframe?.contentWindow) return;
   const outbound = typeof message === "string" ? message : JSON.stringify(message);
   iframe.contentWindow.postMessage(outbound, window.location.origin);
+}
+
+function shouldPersistManualChartEvent(eventData) {
+  if (!eventData || typeof eventData !== "object") return false;
+  const keys = Object.keys(eventData);
+  if (!keys.length) return false;
+  return keys.some((key) => !["autosize", "width", "height"].includes(key));
+}
+
+function extractSerializableFigure(plotContainer) {
+  if (!plotContainer || typeof plotContainer !== "object") return null;
+
+  if (typeof Plotly !== "undefined" && Plotly.Plots && typeof Plotly.Plots.graphJson === "function") {
+    try {
+      const figure = Plotly.Plots.graphJson(plotContainer);
+      if (figure && typeof figure === "object") {
+        return {
+          data: Array.isArray(figure.data) ? figure.data : [],
+          layout: figure.layout && typeof figure.layout === "object" ? figure.layout : {},
+        };
+      }
+    } catch {
+      // Fall back to cloning data/layout below.
+    }
+  }
+
+  try {
+    const data = JSON.parse(JSON.stringify(plotContainer.data || []));
+    const layout = JSON.parse(JSON.stringify(plotContainer.layout || {}));
+    return { data, layout };
+  } catch {
+    return null;
+  }
 }
 
 function schedulePlotResize() {
@@ -523,14 +554,14 @@ function renderChart(chartPayload) {
         window.clearTimeout(debounceTimer);
       }
       debounceTimer = window.setTimeout(() => {
+        const figure = extractSerializableFigure(plotContainer);
+        if (!figure) return;
+
         sendMessageToChainlit({
           type: "CHART_MANUAL_UPDATED",
           payload: {
             chart: {
-              figure: {
-                data: plotContainer.data,
-                layout: plotContainer.layout,
-              },
+              figure,
             },
           },
         });
@@ -541,7 +572,8 @@ function renderChart(chartPayload) {
   Plotly.newPlot(plotContainer, data, layout, config)
     .then(() => {
       schedulePlotResize();
-      plotContainer.on("plotly_relayout", () => {
+      plotContainer.on("plotly_relayout", (eventData) => {
+        if (!shouldPersistManualChartEvent(eventData)) return;
         sendManualChartUpdate();
       });
       plotContainer.on("plotly_restyle", () => {

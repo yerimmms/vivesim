@@ -31,6 +31,8 @@ APP_SOURCE = "csv-agent-app"
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 FILE_LIMIT = 5
 PAGE_SIZE_OPTIONS = (25, 50, 100)
+CHART_SOURCE_AGENT = "agent"
+CHART_SOURCE_MANUAL = "manual"
 CSV_ACCEPT = {
     "text/csv": [".csv"],
     "text/plain": [".csv"],
@@ -523,7 +525,7 @@ def _chart_display_context(
     aggregation = chart_payload.get("aggregation")
     top_n = chart_payload.get("top_n")
     color = chart_payload.get("color")
-    source = str(chart_payload.get("source") or "agent").strip().lower()
+    source = str(chart_payload.get("source") or CHART_SOURCE_AGENT).strip().lower()
     is_manual_override = source == "manual"
     title = str(chart_payload.get("title") or f"{chart_type.title()} chart").strip()
     file_prefix = f"{dataset_name}" if dataset_name else "the active dataset"
@@ -651,7 +653,7 @@ def build_workspace_context(ui_state: Optional[dict[str, Any]]) -> dict[str, Any
         )
 
     chart_state = dict(state.get("chart") or {})
-    chart_source = str(chart_state.get("source") or "agent").strip().lower() if chart_state else None
+    chart_source = str(chart_state.get("source") or CHART_SOURCE_AGENT).strip().lower() if chart_state else None
     chart_manual_override = chart_source == "manual"
     if chart_state:
         prompt_lines.append(
@@ -718,7 +720,7 @@ def build_public_ui_state(
         "active_view": desired_view,
         "status": status,
         "status_badges": ["Manual overrides applied"]
-        if chart_payload and str(chart_payload.get("source") or "agent").strip().lower() == "manual"
+        if chart_payload and str(chart_payload.get("source") or CHART_SOURCE_AGENT).strip().lower() == CHART_SOURCE_MANUAL
         else [],
         "file_registry": file_registry,
     }
@@ -862,7 +864,7 @@ async def build_dataframe_agent(dataset_key: str, df):
                 sort_desc=sort_desc,
                 title=title,
             )
-            plot_payload["source"] = "agent"
+            plot_payload["source"] = CHART_SOURCE_AGENT
             record["chart"] = plot_payload
             datasets[dataset_key] = record
             _set_datasets(datasets)
@@ -1262,12 +1264,18 @@ async def on_window_message(message: str) -> None:
             return
 
         incoming_chart = dict(payload.get("chart") or {})
-        if not incoming_chart:
+        incoming_figure = incoming_chart.get("figure")
+        if not isinstance(incoming_figure, dict):
             return
 
+        normalized_figure = {
+            "data": incoming_figure.get("data") if isinstance(incoming_figure.get("data"), list) else [],
+            "layout": incoming_figure.get("layout") if isinstance(incoming_figure.get("layout"), dict) else {},
+        }
+
         merged_chart = dict(existing_chart)
-        merged_chart.update(incoming_chart)
-        merged_chart["source"] = "manual"
+        merged_chart["figure"] = normalized_figure
+        merged_chart["source"] = CHART_SOURCE_MANUAL
         record["chart"] = merged_chart
         datasets[active_key] = record
         _set_datasets(datasets)
