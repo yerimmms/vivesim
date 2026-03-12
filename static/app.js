@@ -584,6 +584,37 @@ function requestDatasetDeletion(datasetKey) {
   });
 }
 
+function buildChartOptionsPayload(overrides = {}) {
+  const currentChart = state.ui?.chart && typeof state.ui.chart === "object" ? state.ui.chart : {};
+  const merged = { ...currentChart, ...overrides };
+
+  const normalized = {
+    chart_type: typeof merged.chart_type === "string" ? merged.chart_type : "",
+    x: typeof merged.x === "string" ? merged.x : "",
+    y: typeof merged.y === "string" ? merged.y : null,
+    color: typeof merged.color === "string" ? merged.color : null,
+    aggregation: typeof merged.aggregation === "string" ? merged.aggregation : null,
+    top_n: Number.isFinite(Number(merged.top_n)) ? Number.parseInt(merged.top_n, 10) : null,
+    sort_desc: typeof merged.sort_desc === "boolean" ? merged.sort_desc : true,
+    title: typeof merged.title === "string" ? merged.title : null,
+  };
+
+  if (normalized.top_n !== null && normalized.top_n <= 0) {
+    normalized.top_n = null;
+  }
+
+  return normalized;
+}
+
+function notifyChartOptionsChanged(overrides = {}) {
+  const payload = buildChartOptionsPayload(overrides);
+  if (!payload.chart_type || !payload.x) return;
+  sendMessageToChainlit({
+    type: "CHART_OPTIONS_CHANGED",
+    payload,
+  });
+}
+
 window.addEventListener("message", (event) => {
   if (event.origin !== window.location.origin) return;
 
@@ -687,6 +718,24 @@ tableView.addEventListener("change", (event) => {
   const pageSize = Number.parseInt(event.target.value, 10);
   if (!Number.isFinite(pageSize) || pageSize <= 0) return;
   requestTablePageSize(pageSize);
+});
+
+chartView.addEventListener("change", (event) => {
+  const optionName = event.target?.dataset?.chartOption;
+  if (!optionName) return;
+
+  let value = event.target.value;
+  if (event.target.type === "checkbox") {
+    value = Boolean(event.target.checked);
+  }
+  if (optionName === "top_n") {
+    value = value === "" ? null : Number.parseInt(value, 10);
+  }
+  if (["y", "color", "aggregation", "title"].includes(optionName) && value === "") {
+    value = null;
+  }
+
+  notifyChartOptionsChanged({ [optionName]: value });
 });
 
 syncButton.addEventListener("click", requestSync);
