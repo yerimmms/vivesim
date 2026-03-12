@@ -731,6 +731,7 @@ def build_public_ui_state(
             "summary": None,
             "table": None,
             "chart": None,
+            "chart_controls": {"enabled": False, "stage": 1},
             "active_view": "table",
             "status": status,
             "status_badges": [],
@@ -742,6 +743,21 @@ def build_public_ui_state(
     datasets[active_dataset_key] = record
     _set_datasets(datasets)
     chart_payload = record.get("chart")
+    numeric_columns = [
+        str(column) for column in (record.get("summary") or {}).get("numeric_columns") or []
+    ]
+    all_columns = [str(column) for column in record["df"].columns] if "df" in record else []
+    chart_controls = {
+        "enabled": bool(chart_payload),
+        "stage": 1,
+        "chart_type": chart_payload.get("chart_type") if isinstance(chart_payload, dict) else None,
+        "y": chart_payload.get("y") if isinstance(chart_payload, dict) else None,
+        "color": chart_payload.get("color") if isinstance(chart_payload, dict) else None,
+        "aggregation": chart_payload.get("aggregation") if isinstance(chart_payload, dict) else None,
+        "top_n": chart_payload.get("top_n") if isinstance(chart_payload, dict) else None,
+        "available_numeric_columns": numeric_columns,
+        "available_columns": all_columns,
+    }
     if desired_view == "chart" and not chart_payload:
         desired_view = "table"
 
@@ -750,6 +766,7 @@ def build_public_ui_state(
         "summary": record.get("summary"),
         "table": table_payload,
         "chart": chart_payload,
+        "chart_controls": chart_controls,
         "active_view": desired_view,
         "status": status,
         "status_badges": ["Manual overrides applied"]
@@ -899,6 +916,10 @@ async def build_dataframe_agent(dataset_key: str, df):
             )
             plot_payload["source"] = CHART_SOURCE_AGENT
             record["chart"] = plot_payload
+            record["chart_control_defaults"] = {
+                "y": plot_payload.get("y"),
+                "color": plot_payload.get("color"),
+            }
             datasets[dataset_key] = record
             _set_datasets(datasets)
             _set_active_dataset_key(dataset_key)
@@ -1187,6 +1208,116 @@ async def delete_dataset(dataset_key: str) -> None:
     await sync_ui(status=f"Removed {deleted_name}.", active_view="table")
 
 
+
+
+async def apply_chart_controls(payload: dict[str, Any]) -> None:
+    active_key = _get_active_dataset_key()
+    if not active_key:
+        return
+
+    datasets, record = _get_dataset_or_error(active_key)
+    chart_payload = record.get("chart")
+    if not isinstance(chart_payload, dict):
+        await sync_ui(status=f"No chart is currently available for {record['name']}.")
+        return
+
+    requested_y_raw = payload.get("y")
+    requested_y = str(requested_y_raw).strip() if requested_y_raw is not None else ""
+    requested_y = requested_y or None
+
+    requested_color_raw = payload.get("color")
+    requested_color = str(requested_color_raw).strip() if requested_color_raw is not None else ""
+    requested_color = requested_color or None
+
+    available_numeric = set((record.get("summary") or {}).get("numeric_columns") or [])
+    if requested_y and requested_y not in available_numeric:
+        await sync_ui(
+            status=(
+                f"Chart controls were not applied for {record['name']}: "
+                f"'{requested_y}' is not an available numeric y option."
+            )
+        )
+        return
+
+    available_columns = set(map(str, record["df"].columns))
+    if requested_color and requested_color not in available_columns:
+        await sync_ui(
+            status=(
+                f"Chart controls were not applied for {record['name']}: "
+                f"'{requested_color}' is not an available color column."
+            )
+        )
+        return
+
+    try:
+        next_plot = build_plot_payload(
+            df=record["df"],
+            chart_type=str(chart_payload.get("chart_type") or ""),
+            x=str(chart_payload.get("x") or ""),
+            y=requested_y,
+            color=requested_color,
+            aggregation=chart_payload.get("aggregation"),
+            top_n=chart_payload.get("top_n"),
+            sort_desc=bool(chart_payload.get("sort_desc", True)),
+            title=chart_payload.get("title"),
+        )
+    except Exception as exc:
+        await sync_ui(
+            status=f"Chart controls were not applied for {record['name']}: {exc}",
+            active_view="chart",
+        )
+        return
+
+    record["chart"] = next_plot
+    datasets[active_key] = record
+    _set_datasets(datasets)
+    await sync_ui(
+        status=f"Updated chart controls for {record['name']} (y: {requested_y or 'None'}, color: {requested_color or 'None'}).",
+        active_view="chart",
+    )
+
+
+async def reset_chart_controls() -> None:
+    active_key = _get_active_dataset_key()
+    if not active_key:
+        return
+
+    datasets, record = _get_dataset_or_error(active_key)
+    chart_payload = record.get("chart")
+    if not isinstance(chart_payload, dict):
+        await sync_ui(status=f"No chart is currently available for {record['name']}.")
+        return
+
+    chart_type = str(chart_payload.get("chart_type") or "")
+    x = str(chart_payload.get("x") or "")
+    defaults = dict(record.get("chart_control_defaults") or {})
+    default_y = defaults.get("y")
+    default_color = defaults.get("color")
+
+    try:
+        reset_plot = build_plot_payload(
+            df=record["df"],
+            chart_type=chart_type,
+            x=x,
+            y=default_y,
+            color=default_color,
+            aggregation=chart_payload.get("aggregation"),
+            top_n=chart_payload.get("top_n"),
+            sort_desc=bool(chart_payload.get("sort_desc", True)),
+            title=chart_payload.get("title"),
+        )
+    except Exception:
+        await sync_ui(
+            status=f"Chart controls reset is not available for {record['name']} on this chart type.",
+            active_view="chart",
+        )
+        return
+
+    record["chart"] = reset_plot
+    datasets[active_key] = record
+    _set_datasets(datasets)
+    await sync_ui(status=f"Reset chart controls for {record['name']}.", active_view="chart")
+
 def parse_window_message(message: str) -> tuple[str, dict[str, Any]]:
     if message == "SYNC_VIEW":
         return "SYNC_VIEW", {}
@@ -1345,6 +1476,16 @@ async def on_window_message(message: str) -> None:
         datasets[active_key] = record
         _set_datasets(datasets)
         await sync_ui(status=f"Manual chart overrides applied for {record['name']}.", active_view="chart")
+        return
+
+        return
+
+    if message_type == "CHART_CONTROLS_APPLIED":
+        await apply_chart_controls(payload)
+        return
+
+    if message_type == "CHART_CONTROLS_RESET":
+        await reset_chart_controls()
         return
 
 

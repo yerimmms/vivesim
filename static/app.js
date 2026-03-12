@@ -520,7 +520,8 @@ function renderTable(tablePayload) {
 }
 
 function renderChartError(message) {
-  chartView.innerHTML = `
+  const controlsHtml = renderChartControls(state.ui?.chart_controls);
+  chartView.innerHTML = `${controlsHtml}
     <div class="chart-error">
       <h3>Chart could not be displayed</h3>
       <p>${escapeHtml(message)}</p>
@@ -528,6 +529,56 @@ function renderChartError(message) {
   `;
 }
 
+function renderChartControls(chartControls) {
+  if (!chartControls?.enabled) return "";
+
+  const numericColumns = safeArray(chartControls.available_numeric_columns);
+  const allColumns = safeArray(chartControls.available_columns);
+  const yValue = chartControls.y || "";
+  const colorValue = chartControls.color || "";
+
+  const yOptions = ['<option value="">(none)</option>']
+    .concat(
+      numericColumns.map((column) => `<option value="${escapeHtml(column)}" ${column === yValue ? "selected" : ""}>${escapeHtml(column)}</option>`),
+    )
+    .join("");
+
+  const colorOptions = ['<option value="">(none)</option>']
+    .concat(
+      allColumns.map((column) => `<option value="${escapeHtml(column)}" ${column === colorValue ? "selected" : ""}>${escapeHtml(column)}</option>`),
+    )
+    .join("");
+
+  return `
+    <section class="chart-controls" aria-label="Chart controls">
+      <div class="chart-control-grid">
+        <label class="chart-control-field readonly-field">
+          <span>Chart type (read-only)</span>
+          <input type="text" value="${escapeHtml(chartControls.chart_type || "")}" readonly disabled />
+        </label>
+        <label class="chart-control-field">
+          <span>Y</span>
+          <select data-chart-control="y" aria-label="Y column">${yOptions}</select>
+        </label>
+        <label class="chart-control-field">
+          <span>Color</span>
+          <select data-chart-control="color" aria-label="Color column">${colorOptions}</select>
+        </label>
+        <label class="chart-control-field readonly-field">
+          <span>Aggregation (read-only)</span>
+          <input type="text" value="${escapeHtml(chartControls.aggregation || "(unchanged)")}" readonly disabled />
+        </label>
+        <label class="chart-control-field readonly-field">
+          <span>Top N (read-only)</span>
+          <input type="text" value="${escapeHtml(chartControls.top_n ?? "(unchanged)")}" readonly disabled />
+        </label>
+      </div>
+      <div class="chart-control-actions">
+        <button class="table-option" type="button" data-chart-action="apply">Apply</button>
+        <button class="table-option" type="button" data-chart-action="reset">Reset</button>
+      </div>
+    </section>
+  `;
 function resolveChartControlColumns(chartPayload) {
   const controlColumns = safeArray(chartPayload?.controls?.columns);
   if (controlColumns.length) return controlColumns;
@@ -747,6 +798,20 @@ function requestTablePageSize(pageSize) {
   sendMessageToChainlit({
     type: "TABLE_PAGE_SIZE_CHANGED",
     payload: { page_size: pageSize },
+  });
+}
+
+function requestChartControlsApply(payload) {
+  sendMessageToChainlit({
+    type: "CHART_CONTROLS_APPLIED",
+    payload,
+  });
+}
+
+function requestChartControlsReset() {
+  sendMessageToChainlit({
+    type: "CHART_CONTROLS_RESET",
+    payload: {},
   });
 }
 
