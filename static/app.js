@@ -12,6 +12,7 @@ const state = {
     wrapCells: false,
     compactRows: false,
   },
+  lastManualChartFingerprint: null,
 };
 
 const shell = document.querySelector(".shell");
@@ -35,6 +36,21 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderStatus(statusText, badges) {
+  const normalizedStatus = statusText || "Ready";
+  const safeBadges = safeArray(badges);
+  statusBanner.innerHTML = `
+    <div class="status-banner-row">
+      <span>${escapeHtml(normalizedStatus)}</span>
+      ${safeBadges.length
+        ? `<span class="status-badge-strip">${safeBadges
+            .map((badge) => `<span class="status-badge-pill">${escapeHtml(badge)}</span>`)
+            .join("")}</span>`
+        : ""}
+    </div>
+  `;
 }
 
 function safeArray(value) {
@@ -62,6 +78,49 @@ function sendMessageToChainlit(message) {
   if (!iframe?.contentWindow) return;
   const outbound = typeof message === "string" ? message : JSON.stringify(message);
   iframe.contentWindow.postMessage(outbound, window.location.origin);
+}
+
+function shouldPersistManualChartEvent(eventData) {
+  if (!eventData || typeof eventData !== "object") return false;
+  const keys = Object.keys(eventData);
+  if (!keys.length) return false;
+  return keys.some((key) => !["autosize", "width", "height"].includes(key));
+}
+
+function extractSerializableFigure(plotContainer) {
+  if (!plotContainer || typeof plotContainer !== "object") return null;
+
+  if (typeof Plotly !== "undefined" && Plotly.Plots && typeof Plotly.Plots.graphJson === "function") {
+    try {
+      const figure = Plotly.Plots.graphJson(plotContainer);
+      if (figure && typeof figure === "object") {
+        return {
+          data: Array.isArray(figure.data) ? figure.data : [],
+          layout: figure.layout && typeof figure.layout === "object" ? figure.layout : {},
+        };
+      }
+    } catch {
+      // Fall back to cloning data/layout below.
+    }
+  }
+
+  try {
+    const data = JSON.parse(JSON.stringify(plotContainer.data || []));
+    const layout = JSON.parse(JSON.stringify(plotContainer.layout || {}));
+    return { data, layout };
+  } catch {
+    return null;
+  }
+}
+
+
+
+function figureFingerprint(figure) {
+  try {
+    return JSON.stringify(figure || {});
+  } catch {
+    return null;
+  }
 }
 
 function schedulePlotResize() {
@@ -566,22 +625,63 @@ function renderChart(chartPayload) {
   const figure = chartPayload.figure && typeof chartPayload.figure === "object" ? chartPayload.figure : {};
   const data = Array.isArray(figure.data) ? figure.data : [];
   const layout = figure.layout && typeof figure.layout === "object" ? { ...figure.layout, autosize: true } : { autosize: true };
+  const initialFigure = { data, layout };
+  state.lastManualChartFingerprint = figureFingerprint(initialFigure);
+
   const config = {
     responsive: true,
     displaylogo: false,
     ...(chartPayload.config && typeof chartPayload.config === "object" ? chartPayload.config : {}),
   };
 
-  chartView.innerHTML = "";
+  chartView.innerHTML = `
+    <div class="chart-meta">
+      <span>Chart view</span>
+      ${chartPayload.source === "manual" ? '<span class="status-badge-pill">Manual overrides applied</span>' : ""}
+    </div>
+  `;
   renderChartControls(chartPayload);
+
   const plotContainer = document.createElement("div");
   plotContainer.id = "plot-container";
   plotContainer.className = "plot-container";
   chartView.appendChild(plotContainer);
 
+  const sendManualChartUpdate = (() => {
+    let debounceTimer = null;
+    return () => {
+      if (debounceTimer) {
+        window.clearTimeout(debounceTimer);
+      }
+      debounceTimer = window.setTimeout(() => {
+        const figure = extractSerializableFigure(plotContainer);
+        if (!figure) return;
+        const nextFingerprint = figureFingerprint(figure);
+        if (!nextFingerprint || nextFingerprint === state.lastManualChartFingerprint) return;
+        state.lastManualChartFingerprint = nextFingerprint;
+
+        sendMessageToChainlit({
+          type: "CHART_MANUAL_UPDATED",
+          payload: {
+            chart: {
+              figure,
+            },
+          },
+        });
+      }, 250);
+    };
+  })();
+
   Plotly.newPlot(plotContainer, data, layout, config)
     .then(() => {
       schedulePlotResize();
+      plotContainer.on("plotly_relayout", (eventData) => {
+        if (!shouldPersistManualChartEvent(eventData)) return;
+        sendManualChartUpdate();
+      });
+      plotContainer.on("plotly_restyle", () => {
+        sendManualChartUpdate();
+      });
     })
     .catch((error) => {
       const detail = error instanceof Error ? error.message : String(error);
@@ -619,7 +719,7 @@ function render() {
   const ui = state.ui;
   renderFileRegistry(ui?.file_registry);
   renderSummary(ui?.summary, ui?.dataset_name);
-  statusBanner.textContent = ui?.status || "Ready";
+  renderStatus(ui?.status, ui?.status_badges);
   showActiveView(ui?.active_view);
   renderTable(ui?.table);
   renderChart(ui?.chart);

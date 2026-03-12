@@ -347,6 +347,33 @@ button:disabled {
   border: 1px solid rgba(110, 168, 254, 0.22);
 }
 
+
+.status-banner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.status-badge-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.status-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  color: #fff7de;
+  border: 1px solid rgba(244, 190, 87, 0.35);
+  background: rgba(244, 190, 87, 0.15);
+}
+
 .view-container {
   flex: 1;
   min-height: 0;
@@ -565,6 +592,17 @@ button:disabled {
   min-height: 0;
 }
 
+
+.chart-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
 
 .chart-controls-shell {
   display: flex;
