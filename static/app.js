@@ -529,58 +529,8 @@ function renderChartError(message) {
   `;
 }
 
-function renderChartControls(chartControls) {
-  if (!chartControls?.enabled) return "";
-
-  const numericColumns = safeArray(chartControls.available_numeric_columns);
-  const allColumns = safeArray(chartControls.available_columns);
-  const yValue = chartControls.y || "";
-  const colorValue = chartControls.color || "";
-
-  const yOptions = ['<option value="">(none)</option>']
-    .concat(
-      numericColumns.map((column) => `<option value="${escapeHtml(column)}" ${column === yValue ? "selected" : ""}>${escapeHtml(column)}</option>`),
-    )
-    .join("");
-
-  const colorOptions = ['<option value="">(none)</option>']
-    .concat(
-      allColumns.map((column) => `<option value="${escapeHtml(column)}" ${column === colorValue ? "selected" : ""}>${escapeHtml(column)}</option>`),
-    )
-    .join("");
-
-  return `
-    <section class="chart-controls" aria-label="Chart controls">
-      <div class="chart-control-grid">
-        <label class="chart-control-field readonly-field">
-          <span>Chart type (read-only)</span>
-          <input type="text" value="${escapeHtml(chartControls.chart_type || "")}" readonly disabled />
-        </label>
-        <label class="chart-control-field">
-          <span>Y</span>
-          <select data-chart-control="y" aria-label="Y column">${yOptions}</select>
-        </label>
-        <label class="chart-control-field">
-          <span>Color</span>
-          <select data-chart-control="color" aria-label="Color column">${colorOptions}</select>
-        </label>
-        <label class="chart-control-field readonly-field">
-          <span>Aggregation (read-only)</span>
-          <input type="text" value="${escapeHtml(chartControls.aggregation || "(unchanged)")}" readonly disabled />
-        </label>
-        <label class="chart-control-field readonly-field">
-          <span>Top N (read-only)</span>
-          <input type="text" value="${escapeHtml(chartControls.top_n ?? "(unchanged)")}" readonly disabled />
-        </label>
-      </div>
-      <div class="chart-control-actions">
-        <button class="table-option" type="button" data-chart-action="apply">Apply</button>
-        <button class="table-option" type="button" data-chart-action="reset">Reset</button>
-      </div>
-    </section>
-  `;
 function resolveChartControlColumns(chartPayload) {
-  const controlColumns = safeArray(chartPayload?.controls?.columns);
+  const controlColumns = safeArray(chartPayload?.controls?.y_candidates);
   if (controlColumns.length) return controlColumns;
   return safeArray(chartPayload?.columns);
 }
@@ -599,6 +549,7 @@ function renderChartControls(chartPayload) {
     : ["bar", "line", "scatter"];
 
   const canControl = selectableColumns.length > 0;
+  console.log("canControl", canControl)
   const disabledAttr = canControl ? "" : "disabled";
   const helperText = canControl
     ? "Choose axes/style and apply to redraw the chart."
@@ -684,6 +635,7 @@ function renderChart(chartPayload) {
     displaylogo: false,
     ...(chartPayload.config && typeof chartPayload.config === "object" ? chartPayload.config : {}),
   };
+  console.log(chartPayload)
 
   chartView.innerHTML = `
     <div class="chart-meta">
@@ -985,7 +937,7 @@ chartView.addEventListener("change", (event) => {
   }
 
   notifyChartOptionsChanged({ [optionName]: value });
-};
+});
                            
 chartView.addEventListener("click", (event) => {
   const actionElement = event.target?.closest?.("[data-chart-action]");
