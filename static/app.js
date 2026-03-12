@@ -12,6 +12,7 @@ const state = {
     wrapCells: false,
     compactRows: false,
   },
+  lastManualChartFingerprint: null,
 };
 
 const shell = document.querySelector(".shell");
@@ -45,12 +46,13 @@ function renderStatus(statusText, badges) {
       <span>${escapeHtml(normalizedStatus)}</span>
       ${safeBadges.length
         ? `<span class="status-badge-strip">${safeBadges
-            .map((badge) => `<span class="status-pill">${escapeHtml(badge)}</span>`)
+            .map((badge) => `<span class="status-badge-pill">${escapeHtml(badge)}</span>`)
             .join("")}</span>`
         : ""}
     </div>
   `;
 }
+
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -106,6 +108,16 @@ function extractSerializableFigure(plotContainer) {
     const data = JSON.parse(JSON.stringify(plotContainer.data || []));
     const layout = JSON.parse(JSON.stringify(plotContainer.layout || {}));
     return { data, layout };
+  } catch {
+    return null;
+  }
+}
+
+
+
+function figureFingerprint(figure) {
+  try {
+    return JSON.stringify(figure || {});
   } catch {
     return null;
   }
@@ -530,6 +542,9 @@ function renderChart(chartPayload) {
   const figure = chartPayload.figure && typeof chartPayload.figure === "object" ? chartPayload.figure : {};
   const data = Array.isArray(figure.data) ? figure.data : [];
   const layout = figure.layout && typeof figure.layout === "object" ? { ...figure.layout, autosize: true } : { autosize: true };
+  const initialFigure = { data, layout };
+  state.lastManualChartFingerprint = figureFingerprint(initialFigure);
+
   const config = {
     responsive: true,
     displaylogo: false,
@@ -539,7 +554,7 @@ function renderChart(chartPayload) {
   chartView.innerHTML = `
     <div class="chart-meta">
       <span>Chart view</span>
-      ${chartPayload.source === "manual" ? '<span class="status-pill">Manual overrides applied</span>' : ""}
+      ${chartPayload.source === "manual" ? '<span class="status-badge-pill">Manual overrides applied</span>' : ""}
     </div>
   `;
   const plotContainer = document.createElement("div");
@@ -556,6 +571,9 @@ function renderChart(chartPayload) {
       debounceTimer = window.setTimeout(() => {
         const figure = extractSerializableFigure(plotContainer);
         if (!figure) return;
+        const nextFingerprint = figureFingerprint(figure);
+        if (!nextFingerprint || nextFingerprint === state.lastManualChartFingerprint) return;
+        state.lastManualChartFingerprint = nextFingerprint;
 
         sendMessageToChainlit({
           type: "CHART_MANUAL_UPDATED",

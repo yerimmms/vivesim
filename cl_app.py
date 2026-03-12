@@ -526,7 +526,7 @@ def _chart_display_context(
     top_n = chart_payload.get("top_n")
     color = chart_payload.get("color")
     source = str(chart_payload.get("source") or CHART_SOURCE_AGENT).strip().lower()
-    is_manual_override = source == "manual"
+    is_manual_override = source == CHART_SOURCE_MANUAL
     title = str(chart_payload.get("title") or f"{chart_type.title()} chart").strip()
     file_prefix = f"{dataset_name}" if dataset_name else "the active dataset"
     mention_text = f" (@{mention})" if mention else ""
@@ -654,7 +654,7 @@ def build_workspace_context(ui_state: Optional[dict[str, Any]]) -> dict[str, Any
 
     chart_state = dict(state.get("chart") or {})
     chart_source = str(chart_state.get("source") or CHART_SOURCE_AGENT).strip().lower() if chart_state else None
-    chart_manual_override = chart_source == "manual"
+    chart_manual_override = chart_source == CHART_SOURCE_MANUAL
     if chart_state:
         prompt_lines.append(
             "Current chart edit state: "
@@ -701,6 +701,7 @@ def build_public_ui_state(
             "chart": None,
             "active_view": "table",
             "status": status,
+            "status_badges": [],
             "file_registry": file_registry,
         }
 
@@ -1274,6 +1275,9 @@ async def on_window_message(message: str) -> None:
         }
 
         merged_chart = dict(existing_chart)
+        if merged_chart.get("figure") == normalized_figure and merged_chart.get("source") == CHART_SOURCE_MANUAL:
+            return
+
         merged_chart["figure"] = normalized_figure
         merged_chart["source"] = CHART_SOURCE_MANUAL
         record["chart"] = merged_chart

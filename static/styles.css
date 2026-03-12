@@ -363,7 +363,7 @@ button:disabled {
   flex-wrap: wrap;
 }
 
-.status-pill {
+.status-badge-pill {
   display: inline-flex;
   align-items: center;
   padding: 4px 9px;
