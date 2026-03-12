@@ -523,6 +523,8 @@ def _chart_display_context(
     aggregation = chart_payload.get("aggregation")
     top_n = chart_payload.get("top_n")
     color = chart_payload.get("color")
+    source = str(chart_payload.get("source") or "agent").strip().lower()
+    is_manual_override = source == "manual"
     title = str(chart_payload.get("title") or f"{chart_type.title()} chart").strip()
     file_prefix = f"{dataset_name}" if dataset_name else "the active dataset"
     mention_text = f" (@{mention})" if mention else ""
@@ -549,6 +551,10 @@ def _chart_display_context(
         prompt_lines.append(f"Color or grouping column: {color}.")
     if top_n:
         prompt_lines.append(f"Top-N filter applied: {top_n}.")
+    if is_manual_override:
+        prompt_lines.append(
+            "This chart includes manual overrides from the workspace UI; trust the displayed chart state over earlier agent defaults."
+        )
 
     details = [
         f"Dataset: {file_prefix}{mention_text}.",
@@ -564,6 +570,7 @@ def _chart_display_context(
         details.append(f"Grouped or colored by: {color}.")
     if top_n:
         details.append(f"Top-N filter applied: {top_n}.")
+    details.append(f"Chart source: {'manual override' if is_manual_override else 'agent-generated'}.")
 
     return {
         "kind": "chart",
@@ -571,6 +578,7 @@ def _chart_display_context(
         "description": description,
         "details": details,
         "prompt_lines": prompt_lines,
+        "is_manual_override": is_manual_override,
     }
 
 
@@ -642,12 +650,23 @@ def build_workspace_context(ui_state: Optional[dict[str, Any]]) -> dict[str, Any
             + "."
         )
 
+    chart_state = dict(state.get("chart") or {})
+    chart_source = str(chart_state.get("source") or "agent").strip().lower() if chart_state else None
+    chart_manual_override = chart_source == "manual"
+    if chart_state:
+        prompt_lines.append(
+            "Current chart edit state: "
+            + ("manual overrides applied." if chart_manual_override else "agent-generated defaults.")
+        )
+
     return {
         "active_view": active_view or None,
         "active_file": active_file,
         "current_display": current_display,
         "alternate_display": alternate_display,
         "transformations": transformations,
+        "chart_source": chart_source,
+        "chart_manual_override": chart_manual_override,
         "prompt_context": "\n".join(prompt_lines),
     }
 
@@ -698,6 +717,9 @@ def build_public_ui_state(
         "chart": chart_payload,
         "active_view": desired_view,
         "status": status,
+        "status_badges": ["Manual overrides applied"]
+        if chart_payload and str(chart_payload.get("source") or "agent").strip().lower() == "manual"
+        else [],
         "file_registry": file_registry,
     }
 
@@ -840,6 +862,7 @@ async def build_dataframe_agent(dataset_key: str, df):
                 sort_desc=sort_desc,
                 title=title,
             )
+            plot_payload["source"] = "agent"
             record["chart"] = plot_payload
             datasets[dataset_key] = record
             _set_datasets(datasets)
@@ -1227,6 +1250,29 @@ async def on_window_message(message: str) -> None:
             ),
             active_view="table",
         )
+        return
+
+    if message_type == "CHART_MANUAL_UPDATED":
+        active_key = _get_active_dataset_key()
+        if not active_key:
+            return
+        datasets, record = _get_dataset_or_error(active_key)
+        existing_chart = dict(record.get("chart") or {})
+        if not existing_chart:
+            return
+
+        incoming_chart = dict(payload.get("chart") or {})
+        if not incoming_chart:
+            return
+
+        merged_chart = dict(existing_chart)
+        merged_chart.update(incoming_chart)
+        merged_chart["source"] = "manual"
+        record["chart"] = merged_chart
+        datasets[active_key] = record
+        _set_datasets(datasets)
+        await sync_ui(status=f"Manual chart overrides applied for {record['name']}.", active_view="chart")
+        return
 
 
 @cl.on_message

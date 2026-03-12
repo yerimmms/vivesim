@@ -37,6 +37,22 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+
+
+function renderStatus(statusText, badges) {
+  const normalizedStatus = statusText || "Ready";
+  const safeBadges = safeArray(badges);
+  statusBanner.innerHTML = `
+    <div class="status-banner-row">
+      <span>${escapeHtml(normalizedStatus)}</span>
+      ${safeBadges.length
+        ? `<span class="status-badge-strip">${safeBadges
+            .map((badge) => `<span class="status-pill">${escapeHtml(badge)}</span>`)
+            .join("")}</span>`
+        : ""}
+    </div>
+  `;
+}
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -489,15 +505,48 @@ function renderChart(chartPayload) {
     ...(chartPayload.config && typeof chartPayload.config === "object" ? chartPayload.config : {}),
   };
 
-  chartView.innerHTML = "";
+  chartView.innerHTML = `
+    <div class="chart-meta">
+      <span>Chart view</span>
+      ${chartPayload.source === "manual" ? '<span class="status-pill">Manual overrides applied</span>' : ""}
+    </div>
+  `;
   const plotContainer = document.createElement("div");
   plotContainer.id = "plot-container";
   plotContainer.className = "plot-container";
   chartView.appendChild(plotContainer);
 
+  const sendManualChartUpdate = (() => {
+    let debounceTimer = null;
+    return () => {
+      if (debounceTimer) {
+        window.clearTimeout(debounceTimer);
+      }
+      debounceTimer = window.setTimeout(() => {
+        sendMessageToChainlit({
+          type: "CHART_MANUAL_UPDATED",
+          payload: {
+            chart: {
+              figure: {
+                data: plotContainer.data,
+                layout: plotContainer.layout,
+              },
+            },
+          },
+        });
+      }, 250);
+    };
+  })();
+
   Plotly.newPlot(plotContainer, data, layout, config)
     .then(() => {
       schedulePlotResize();
+      plotContainer.on("plotly_relayout", () => {
+        sendManualChartUpdate();
+      });
+      plotContainer.on("plotly_restyle", () => {
+        sendManualChartUpdate();
+      });
     })
     .catch((error) => {
       const detail = error instanceof Error ? error.message : String(error);
@@ -535,7 +584,7 @@ function render() {
   const ui = state.ui;
   renderFileRegistry(ui?.file_registry);
   renderSummary(ui?.summary, ui?.dataset_name);
-  statusBanner.textContent = ui?.status || "Ready";
+  renderStatus(ui?.status, ui?.status_badges);
   showActiveView(ui?.active_view);
   renderTable(ui?.table);
   renderChart(ui?.chart);
