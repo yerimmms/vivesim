@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from langchain_core.tools import tool
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from data_processing import (
     build_plot_payload,
@@ -31,6 +31,8 @@ APP_SOURCE = "csv-agent-app"
 DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 FILE_LIMIT = 5
 PAGE_SIZE_OPTIONS = (25, 50, 100)
+CHART_SOURCE_AGENT = "agent"
+CHART_SOURCE_MANUAL = "manual"
 CSV_ACCEPT = {
     "text/csv": [".csv"],
     "text/plain": [".csv"],
@@ -188,6 +190,38 @@ class PreprocessDataFrameInput(BaseModel):
         if not cleaned:
             raise ValueError("At least one target column is required.")
         self.target_column = cleaned
+        return self
+
+
+class ChartOptionsChangedInput(BaseModel):
+    chart_type: Literal["bar", "line", "scatter", "histogram", "box", "pie"]
+    x: str
+    y: Optional[str] = None
+    color: Optional[str] = None
+    aggregation: Optional[Literal["sum", "mean", "count", "median", "min", "max"]] = None
+    top_n: Optional[int] = None
+    sort_desc: bool = True
+    title: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_fields(self) -> "ChartOptionsChangedInput":
+        self.x = str(self.x).strip()
+        if not self.x:
+            raise ValueError("x is required.")
+
+        if self.y is not None:
+            self.y = str(self.y).strip() or None
+        if self.color is not None:
+            self.color = str(self.color).strip() or None
+        if self.title is not None:
+            self.title = str(self.title).strip() or None
+
+        if self.top_n is not None and int(self.top_n) <= 0:
+            raise ValueError("top_n must be a positive integer.")
+
+        if self.chart_type == "pie" and not self.y and self.aggregation != "count":
+            raise ValueError("Pie charts require a y column or aggregation='count'.")
+
         return self
 
 
@@ -523,6 +557,8 @@ def _chart_display_context(
     aggregation = chart_payload.get("aggregation")
     top_n = chart_payload.get("top_n")
     color = chart_payload.get("color")
+    source = str(chart_payload.get("source") or CHART_SOURCE_AGENT).strip().lower()
+    is_manual_override = source == CHART_SOURCE_MANUAL
     title = str(chart_payload.get("title") or f"{chart_type.title()} chart").strip()
     file_prefix = f"{dataset_name}" if dataset_name else "the active dataset"
     mention_text = f" (@{mention})" if mention else ""
@@ -549,6 +585,10 @@ def _chart_display_context(
         prompt_lines.append(f"Color or grouping column: {color}.")
     if top_n:
         prompt_lines.append(f"Top-N filter applied: {top_n}.")
+    if is_manual_override:
+        prompt_lines.append(
+            "This chart includes manual overrides from the workspace UI; trust the displayed chart state over earlier agent defaults."
+        )
 
     details = [
         f"Dataset: {file_prefix}{mention_text}.",
@@ -564,6 +604,7 @@ def _chart_display_context(
         details.append(f"Grouped or colored by: {color}.")
     if top_n:
         details.append(f"Top-N filter applied: {top_n}.")
+    details.append(f"Chart source: {'manual override' if is_manual_override else 'agent-generated'}.")
 
     return {
         "kind": "chart",
@@ -571,6 +612,7 @@ def _chart_display_context(
         "description": description,
         "details": details,
         "prompt_lines": prompt_lines,
+        "is_manual_override": is_manual_override,
     }
 
 
@@ -642,12 +684,23 @@ def build_workspace_context(ui_state: Optional[dict[str, Any]]) -> dict[str, Any
             + "."
         )
 
+    chart_state = dict(state.get("chart") or {})
+    chart_source = str(chart_state.get("source") or CHART_SOURCE_AGENT).strip().lower() if chart_state else None
+    chart_manual_override = chart_source == CHART_SOURCE_MANUAL
+    if chart_state:
+        prompt_lines.append(
+            "Current chart edit state: "
+            + ("manual overrides applied." if chart_manual_override else "agent-generated defaults.")
+        )
+
     return {
         "active_view": active_view or None,
         "active_file": active_file,
         "current_display": current_display,
         "alternate_display": alternate_display,
         "transformations": transformations,
+        "chart_source": chart_source,
+        "chart_manual_override": chart_manual_override,
         "prompt_context": "\n".join(prompt_lines),
     }
 
@@ -681,6 +734,7 @@ def build_public_ui_state(
             "chart_controls": {"enabled": False, "stage": 1},
             "active_view": "table",
             "status": status,
+            "status_badges": [],
             "file_registry": file_registry,
         }
 
@@ -715,6 +769,9 @@ def build_public_ui_state(
         "chart_controls": chart_controls,
         "active_view": desired_view,
         "status": status,
+        "status_badges": ["Manual overrides applied"]
+        if chart_payload and str(chart_payload.get("source") or CHART_SOURCE_AGENT).strip().lower() == CHART_SOURCE_MANUAL
+        else [],
         "file_registry": file_registry,
     }
 
@@ -857,6 +914,7 @@ async def build_dataframe_agent(dataset_key: str, df):
                 sort_desc=sort_desc,
                 title=title,
             )
+            plot_payload["source"] = CHART_SOURCE_AGENT
             record["chart"] = plot_payload
             record["chart_control_defaults"] = {
                 "y": plot_payload.get("y"),
@@ -1339,6 +1397,35 @@ async def on_window_message(message: str) -> None:
         await sync_ui(active_view="table")
         return
 
+    if message_type == "CHART_OPTIONS_CHANGED":
+        active_key = _get_active_dataset_key()
+        if not active_key:
+            return
+
+        datasets, record = _get_dataset_or_error(active_key)
+        try:
+            options = ChartOptionsChangedInput.model_validate(payload)
+            plot_payload = build_plot_payload(
+                record["df"],
+                chart_type=options.chart_type,
+                x=options.x,
+                y=options.y,
+                color=options.color,
+                aggregation=options.aggregation,
+                top_n=options.top_n,
+                sort_desc=options.sort_desc,
+                title=options.title,
+            )
+        except (ValidationError, ValueError) as exc:
+            await sync_ui(status=f"Failed to update chart options: {exc}", active_view="chart")
+            return
+
+        record["chart"] = plot_payload
+        datasets[active_key] = record
+        _set_datasets(datasets)
+        await sync_ui(status=f"Updated chart options for {record['name']}.", active_view="chart")
+        return
+
     if message_type == "TABLE_PAGE_SIZE_CHANGED":
         active_key = _get_active_dataset_key()
         if not active_key:
@@ -1358,6 +1445,38 @@ async def on_window_message(message: str) -> None:
             ),
             active_view="table",
         )
+        return
+
+    if message_type == "CHART_MANUAL_UPDATED":
+        active_key = _get_active_dataset_key()
+        if not active_key:
+            return
+        datasets, record = _get_dataset_or_error(active_key)
+        existing_chart = dict(record.get("chart") or {})
+        if not existing_chart:
+            return
+
+        incoming_chart = dict(payload.get("chart") or {})
+        incoming_figure = incoming_chart.get("figure")
+        if not isinstance(incoming_figure, dict):
+            return
+
+        normalized_figure = {
+            "data": incoming_figure.get("data") if isinstance(incoming_figure.get("data"), list) else [],
+            "layout": incoming_figure.get("layout") if isinstance(incoming_figure.get("layout"), dict) else {},
+        }
+
+        merged_chart = dict(existing_chart)
+        if merged_chart.get("figure") == normalized_figure and merged_chart.get("source") == CHART_SOURCE_MANUAL:
+            return
+
+        merged_chart["figure"] = normalized_figure
+        merged_chart["source"] = CHART_SOURCE_MANUAL
+        record["chart"] = merged_chart
+        datasets[active_key] = record
+        _set_datasets(datasets)
+        await sync_ui(status=f"Manual chart overrides applied for {record['name']}.", active_view="chart")
+        return
 
         return
 

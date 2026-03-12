@@ -12,6 +12,7 @@ const state = {
     wrapCells: false,
     compactRows: false,
   },
+  lastManualChartFingerprint: null,
 };
 
 const shell = document.querySelector(".shell");
@@ -35,6 +36,21 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderStatus(statusText, badges) {
+  const normalizedStatus = statusText || "Ready";
+  const safeBadges = safeArray(badges);
+  statusBanner.innerHTML = `
+    <div class="status-banner-row">
+      <span>${escapeHtml(normalizedStatus)}</span>
+      ${safeBadges.length
+        ? `<span class="status-badge-strip">${safeBadges
+            .map((badge) => `<span class="status-badge-pill">${escapeHtml(badge)}</span>`)
+            .join("")}</span>`
+        : ""}
+    </div>
+  `;
 }
 
 function safeArray(value) {
@@ -62,6 +78,49 @@ function sendMessageToChainlit(message) {
   if (!iframe?.contentWindow) return;
   const outbound = typeof message === "string" ? message : JSON.stringify(message);
   iframe.contentWindow.postMessage(outbound, window.location.origin);
+}
+
+function shouldPersistManualChartEvent(eventData) {
+  if (!eventData || typeof eventData !== "object") return false;
+  const keys = Object.keys(eventData);
+  if (!keys.length) return false;
+  return keys.some((key) => !["autosize", "width", "height"].includes(key));
+}
+
+function extractSerializableFigure(plotContainer) {
+  if (!plotContainer || typeof plotContainer !== "object") return null;
+
+  if (typeof Plotly !== "undefined" && Plotly.Plots && typeof Plotly.Plots.graphJson === "function") {
+    try {
+      const figure = Plotly.Plots.graphJson(plotContainer);
+      if (figure && typeof figure === "object") {
+        return {
+          data: Array.isArray(figure.data) ? figure.data : [],
+          layout: figure.layout && typeof figure.layout === "object" ? figure.layout : {},
+        };
+      }
+    } catch {
+      // Fall back to cloning data/layout below.
+    }
+  }
+
+  try {
+    const data = JSON.parse(JSON.stringify(plotContainer.data || []));
+    const layout = JSON.parse(JSON.stringify(plotContainer.layout || {}));
+    return { data, layout };
+  } catch {
+    return null;
+  }
+}
+
+
+
+function figureFingerprint(figure) {
+  try {
+    return JSON.stringify(figure || {});
+  } catch {
+    return null;
+  }
 }
 
 function schedulePlotResize() {
@@ -520,6 +579,87 @@ function renderChartControls(chartControls) {
       </div>
     </section>
   `;
+function resolveChartControlColumns(chartPayload) {
+  const controlColumns = safeArray(chartPayload?.controls?.columns);
+  if (controlColumns.length) return controlColumns;
+  return safeArray(chartPayload?.columns);
+}
+
+function renderChartControls(chartPayload) {
+  const controlsContainer = document.createElement("section");
+  controlsContainer.className = "chart-controls-shell";
+  controlsContainer.setAttribute("aria-label", "Chart controls");
+
+  const selectableColumns = resolveChartControlColumns(chartPayload);
+  const selectedY = chartPayload?.controls?.selected_y || "";
+  const selectedColor = chartPayload?.controls?.selected_color || "";
+  const selectedChartType = chartPayload?.controls?.selected_chart_type || "";
+  const chartTypes = safeArray(chartPayload?.controls?.chart_types).length
+    ? safeArray(chartPayload?.controls?.chart_types)
+    : ["bar", "line", "scatter"];
+
+  const canControl = selectableColumns.length > 0;
+  const disabledAttr = canControl ? "" : "disabled";
+  const helperText = canControl
+    ? "Choose axes/style and apply to redraw the chart."
+    : "컨트롤 가능한 컬럼 정보가 없어 차트 설정을 변경할 수 없습니다.";
+
+  const columnOptions = selectableColumns.length
+    ? selectableColumns
+        .map(
+          (column) =>
+            `<option value="${escapeHtml(column)}" ${selectedY === column ? "selected" : ""}>${escapeHtml(column)}</option>`,
+        )
+        .join("")
+    : '<option value="">No columns available</option>';
+
+  const colorOptions = selectableColumns.length
+    ? ['<option value="">None</option>']
+        .concat(
+          selectableColumns.map(
+            (column) =>
+              `<option value="${escapeHtml(column)}" ${selectedColor === column ? "selected" : ""}>${escapeHtml(column)}</option>`,
+          ),
+        )
+        .join("")
+    : '<option value="">No columns available</option>';
+
+  const chartTypeOptions = chartTypes
+    .map(
+      (type) =>
+        `<option value="${escapeHtml(type)}" ${selectedChartType === type ? "selected" : ""}>${escapeHtml(type)}</option>`,
+    )
+    .join("");
+
+  controlsContainer.innerHTML = `
+    <div class="chart-controls-grid">
+      <label class="chart-control-field">
+        <span>y</span>
+        <select data-chart-control="y" aria-label="Chart Y axis column" ${disabledAttr}>
+          ${columnOptions}
+        </select>
+      </label>
+      <label class="chart-control-field">
+        <span>color</span>
+        <select data-chart-control="color" aria-label="Chart color grouping column" ${disabledAttr}>
+          ${colorOptions}
+        </select>
+      </label>
+      <label class="chart-control-field">
+        <span>chart type</span>
+        <select data-chart-control="chart-type" aria-label="Chart type" ${disabledAttr}>
+          ${chartTypeOptions}
+        </select>
+      </label>
+      <div class="chart-control-actions" aria-label="Chart control actions">
+        <button class="table-option" type="button" data-chart-action="apply" ${disabledAttr}>Apply</button>
+        <button class="table-option" type="button" data-chart-action="reset" ${disabledAttr}>Reset</button>
+      </div>
+    </div>
+    <p class="chart-control-help ${canControl ? "" : "is-disabled"}">${escapeHtml(helperText)}</p>
+  `;
+
+  chartView.appendChild(controlsContainer);
 }
 
 function renderChart(chartPayload) {
@@ -536,21 +676,63 @@ function renderChart(chartPayload) {
   const figure = chartPayload.figure && typeof chartPayload.figure === "object" ? chartPayload.figure : {};
   const data = Array.isArray(figure.data) ? figure.data : [];
   const layout = figure.layout && typeof figure.layout === "object" ? { ...figure.layout, autosize: true } : { autosize: true };
+  const initialFigure = { data, layout };
+  state.lastManualChartFingerprint = figureFingerprint(initialFigure);
+
   const config = {
     responsive: true,
     displaylogo: false,
     ...(chartPayload.config && typeof chartPayload.config === "object" ? chartPayload.config : {}),
   };
 
-  chartView.innerHTML = renderChartControls(state.ui?.chart_controls);
+  chartView.innerHTML = `
+    <div class="chart-meta">
+      <span>Chart view</span>
+      ${chartPayload.source === "manual" ? '<span class="status-badge-pill">Manual overrides applied</span>' : ""}
+    </div>
+  `;
+  renderChartControls(chartPayload);
+
   const plotContainer = document.createElement("div");
   plotContainer.id = "plot-container";
   plotContainer.className = "plot-container";
   chartView.appendChild(plotContainer);
 
+  const sendManualChartUpdate = (() => {
+    let debounceTimer = null;
+    return () => {
+      if (debounceTimer) {
+        window.clearTimeout(debounceTimer);
+      }
+      debounceTimer = window.setTimeout(() => {
+        const figure = extractSerializableFigure(plotContainer);
+        if (!figure) return;
+        const nextFingerprint = figureFingerprint(figure);
+        if (!nextFingerprint || nextFingerprint === state.lastManualChartFingerprint) return;
+        state.lastManualChartFingerprint = nextFingerprint;
+
+        sendMessageToChainlit({
+          type: "CHART_MANUAL_UPDATED",
+          payload: {
+            chart: {
+              figure,
+            },
+          },
+        });
+      }, 250);
+    };
+  })();
+
   Plotly.newPlot(plotContainer, data, layout, config)
     .then(() => {
       schedulePlotResize();
+      plotContainer.on("plotly_relayout", (eventData) => {
+        if (!shouldPersistManualChartEvent(eventData)) return;
+        sendManualChartUpdate();
+      });
+      plotContainer.on("plotly_restyle", () => {
+        sendManualChartUpdate();
+      });
     })
     .catch((error) => {
       const detail = error instanceof Error ? error.message : String(error);
@@ -588,7 +770,7 @@ function render() {
   const ui = state.ui;
   renderFileRegistry(ui?.file_registry);
   renderSummary(ui?.summary, ui?.dataset_name);
-  statusBanner.textContent = ui?.status || "Ready";
+  renderStatus(ui?.status, ui?.status_badges);
   showActiveView(ui?.active_view);
   renderTable(ui?.table);
   renderChart(ui?.chart);
@@ -648,6 +830,37 @@ function requestDatasetDeletion(datasetKey) {
   sendMessageToChainlit({
     type: "DELETE_DATASET",
     payload: { dataset_key: datasetKey },
+  });
+}
+
+function buildChartOptionsPayload(overrides = {}) {
+  const currentChart = state.ui?.chart && typeof state.ui.chart === "object" ? state.ui.chart : {};
+  const merged = { ...currentChart, ...overrides };
+
+  const normalized = {
+    chart_type: typeof merged.chart_type === "string" ? merged.chart_type : "",
+    x: typeof merged.x === "string" ? merged.x : "",
+    y: typeof merged.y === "string" ? merged.y : null,
+    color: typeof merged.color === "string" ? merged.color : null,
+    aggregation: typeof merged.aggregation === "string" ? merged.aggregation : null,
+    top_n: Number.isFinite(Number(merged.top_n)) ? Number.parseInt(merged.top_n, 10) : null,
+    sort_desc: typeof merged.sort_desc === "boolean" ? merged.sort_desc : true,
+    title: typeof merged.title === "string" ? merged.title : null,
+  };
+
+  if (normalized.top_n !== null && normalized.top_n <= 0) {
+    normalized.top_n = null;
+  }
+
+  return normalized;
+}
+
+function notifyChartOptionsChanged(overrides = {}) {
+  const payload = buildChartOptionsPayload(overrides);
+  if (!payload.chart_type || !payload.x) return;
+  sendMessageToChainlit({
+    type: "CHART_OPTIONS_CHANGED",
+    payload,
   });
 }
 
@@ -756,18 +969,42 @@ tableView.addEventListener("change", (event) => {
   requestTablePageSize(pageSize);
 });
 
+chartView.addEventListener("change", (event) => {
+  const optionName = event.target?.dataset?.chartOption;
+  if (!optionName) return;
+
+  let value = event.target.value;
+  if (event.target.type === "checkbox") {
+    value = Boolean(event.target.checked);
+  }
+  if (optionName === "top_n") {
+    value = value === "" ? null : Number.parseInt(value, 10);
+  }
+  if (["y", "color", "aggregation", "title"].includes(optionName) && value === "") {
+    value = null;
+  }
+
+  notifyChartOptionsChanged({ [optionName]: value });
+};
+                           
 chartView.addEventListener("click", (event) => {
-  const action = event.target?.closest?.("[data-chart-action]")?.dataset?.chartAction;
+  const actionElement = event.target?.closest?.("[data-chart-action]");
+  const action = actionElement?.dataset?.chartAction;
   if (!action) return;
-  if (action === "reset") {
-    requestChartControlsReset();
+
+  if (action === "apply") {
+    const payload = {
+      y: chartView.querySelector('[data-chart-control="y"]')?.value || null,
+      color: chartView.querySelector('[data-chart-control="color"]')?.value || null,
+      chart_type: chartView.querySelector('[data-chart-control="chart-type"]')?.value || null,
+    };
+    sendMessageToChainlit({ type: "CHART_CONTROLS_APPLY", payload });
     return;
   }
-  if (action !== "apply") return;
 
-  const y = chartView.querySelector('[data-chart-control="y"]')?.value ?? "";
-  const color = chartView.querySelector('[data-chart-control="color"]')?.value ?? "";
-  requestChartControlsApply({ y, color });
+  if (action === "reset") {
+    sendMessageToChainlit({ type: "CHART_CONTROLS_RESET", payload: {} });
+  }
 });
 
 syncButton.addEventListener("click", requestSync);

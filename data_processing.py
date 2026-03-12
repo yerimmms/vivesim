@@ -755,7 +755,13 @@ def build_plot_payload(
     _validate_columns(df, x, y, color)
 
     plot_df = df.copy()
+    x_candidates = [str(column) for column in df.columns]
+    y_candidates = [str(column) for column in df.columns]
+    color_candidates = [str(column) for column in df.columns]
+    chart_type_candidates = sorted(CHART_TYPES)
     resolved_y = y
+    color_forbidden_by_aggregation = False
+    color_policy_reason: Optional[str] = None
 
     if chart_type in {"bar", "line", "pie"} and (aggregation or chart_type == "pie"):
         if aggregation == "count" or (chart_type == "pie" and not y):
@@ -766,6 +772,11 @@ def build_plot_payload(
                 raise ValueError(f"'{chart_type}' charts with aggregation require a y column.")
             plot_df = plot_df.groupby(x, dropna=False)[y].agg(aggregation or "sum").reset_index()
             resolved_y = y
+        if color is not None:
+            color_forbidden_by_aggregation = True
+            color_policy_reason = (
+                "Color grouping is disabled when aggregation is applied to bar/line/pie charts."
+            )
         color = None
 
     if chart_type == "pie" and resolved_y is None:
@@ -825,4 +836,20 @@ def build_plot_payload(
         "aggregation": aggregation,
         "top_n": top_n,
         "sort_desc": bool(sort_desc),
+        "controls": {
+            "x_candidates": x_candidates,
+            "y_candidates": y_candidates,
+            "color_candidates": color_candidates,
+            "chart_type_candidates": chart_type_candidates,
+            "selected": {
+                "chart_type": chart_type,
+                "x": x,
+                "y": resolved_y,
+                "color": color,
+            },
+            "disabled": {"color": color_forbidden_by_aggregation},
+            "disabled_reasons": {
+                "color": color_policy_reason,
+            },
+        },
     }

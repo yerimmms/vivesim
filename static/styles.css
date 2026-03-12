@@ -347,6 +347,33 @@ button:disabled {
   border: 1px solid rgba(110, 168, 254, 0.22);
 }
 
+
+.status-banner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.status-badge-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.status-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  color: #fff7de;
+  border: 1px solid rgba(244, 190, 87, 0.35);
+  background: rgba(244, 190, 87, 0.15);
+}
+
 .view-container {
   flex: 1;
   min-height: 0;
@@ -609,6 +636,69 @@ button:disabled {
   gap: 8px;
 }
 
+
+.chart-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.chart-controls-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.chart-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.chart-control-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.chart-control-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(13, 18, 35, 0.85);
+  color: var(--text);
+}
+
+.chart-control-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.chart-control-help {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.chart-control-help.is-disabled {
+  color: rgba(232, 174, 174, 0.9);
+}
 .plot-container {
   flex: 1 1 auto;
   width: 100%;
@@ -994,6 +1084,16 @@ button:disabled {
 
   .file-strip {
     grid-auto-columns: minmax(220px, 1fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .chart-controls-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chart-control-actions {
+    grid-column: span 2;
   }
 }
 
