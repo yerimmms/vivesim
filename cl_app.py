@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from langchain_core.tools import tool
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from data_processing import (
     build_plot_payload,
@@ -188,6 +188,38 @@ class PreprocessDataFrameInput(BaseModel):
         if not cleaned:
             raise ValueError("At least one target column is required.")
         self.target_column = cleaned
+        return self
+
+
+class ChartOptionsChangedInput(BaseModel):
+    chart_type: Literal["bar", "line", "scatter", "histogram", "box", "pie"]
+    x: str
+    y: Optional[str] = None
+    color: Optional[str] = None
+    aggregation: Optional[Literal["sum", "mean", "count", "median", "min", "max"]] = None
+    top_n: Optional[int] = None
+    sort_desc: bool = True
+    title: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_fields(self) -> "ChartOptionsChangedInput":
+        self.x = str(self.x).strip()
+        if not self.x:
+            raise ValueError("x is required.")
+
+        if self.y is not None:
+            self.y = str(self.y).strip() or None
+        if self.color is not None:
+            self.color = str(self.color).strip() or None
+        if self.title is not None:
+            self.title = str(self.title).strip() or None
+
+        if self.top_n is not None and int(self.top_n) <= 0:
+            raise ValueError("top_n must be a positive integer.")
+
+        if self.chart_type == "pie" and not self.y and self.aggregation != "count":
+            raise ValueError("Pie charts require a y column or aggregation='count'.")
+
         return self
 
 
@@ -1206,6 +1238,35 @@ async def on_window_message(message: str) -> None:
         datasets[active_key] = record
         _set_datasets(datasets)
         await sync_ui(active_view="table")
+        return
+
+    if message_type == "CHART_OPTIONS_CHANGED":
+        active_key = _get_active_dataset_key()
+        if not active_key:
+            return
+
+        datasets, record = _get_dataset_or_error(active_key)
+        try:
+            options = ChartOptionsChangedInput.model_validate(payload)
+            plot_payload = build_plot_payload(
+                record["df"],
+                chart_type=options.chart_type,
+                x=options.x,
+                y=options.y,
+                color=options.color,
+                aggregation=options.aggregation,
+                top_n=options.top_n,
+                sort_desc=options.sort_desc,
+                title=options.title,
+            )
+        except (ValidationError, ValueError) as exc:
+            await sync_ui(status=f"Failed to update chart options: {exc}", active_view="chart")
+            return
+
+        record["chart"] = plot_payload
+        datasets[active_key] = record
+        _set_datasets(datasets)
+        await sync_ui(status=f"Updated chart options for {record['name']}.", active_view="chart")
         return
 
     if message_type == "TABLE_PAGE_SIZE_CHANGED":
