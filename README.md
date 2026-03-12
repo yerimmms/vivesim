@@ -170,8 +170,45 @@ The frontend can send these events back to Chainlit:
 - `REQUEST_UPLOAD_FILES`
 - `TABLE_PAGE_CHANGED`
 - `TABLE_PAGE_SIZE_CHANGED`
+- `CHART_CONTROLS_APPLIED`
+- `CHART_CONTROLS_RESET`
 
 This keeps the left-pane workspace and the chat agent synchronized.
+
+## Chart controls (2-stage rollout)
+
+The chart view includes a controls panel that is intentionally delivered in two stages.
+
+### Stage 1 (MVP)
+
+Supported in this build:
+
+- editable `y` dropdown
+- editable `color` dropdown
+- `Apply` / `Reset` actions
+
+Not yet editable in Stage 1:
+
+- `chart_type` is displayed as read-only/disabled
+- `aggregation` and `top_n` are displayed as read-only and preserved from the latest `render_plot` result
+
+Behavior notes:
+
+- Applying chart controls reuses the existing `render_plot` semantics (same chart type, x, aggregation, top_n, and title; only y/color are changed).
+- If an invalid option is chosen, the app does not crash; it keeps running and updates the status banner with an error message.
+- If a dataset has no chart payload, the Chart tab remains disabled.
+
+### Stage 2 (planned)
+
+Planned expansion:
+
+- make `chart_type`, `aggregation`, and `top_n` editable from the chart controls panel
+- add type-aware option validation in the frontend to reduce invalid requests before submit
+
+### Current chart limitations
+
+- Pie charts default to count-by-category when `y` is omitted, and still follow backend aggregation rules when aggregation is provided.
+- Aggregation behavior remains constrained by the backend plotting rules in `build_plot_payload()`.
 
 ---
 

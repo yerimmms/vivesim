@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import plotly.express as px
+from plotly.utils import PlotlyJSONEncoder
 
 MISSING_TOKENS = {
     "",
@@ -815,7 +816,7 @@ def build_plot_payload(
 
     return {
         "chart_type": chart_type,
-        "figure": json.loads(json.dumps(figure_payload, default=str)),
+        "figure": json.loads(json.dumps(figure_payload, cls=PlotlyJSONEncoder)),
         "config": {"responsive": True, "displaylogo": False},
         "title": title,
         "x": x,
@@ -823,4 +824,5 @@ def build_plot_payload(
         "color": color,
         "aggregation": aggregation,
         "top_n": top_n,
+        "sort_desc": bool(sort_desc),
     }
