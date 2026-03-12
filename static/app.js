@@ -528,6 +528,89 @@ function renderChartError(message) {
   `;
 }
 
+function resolveChartControlColumns(chartPayload) {
+  const controlColumns = safeArray(chartPayload?.controls?.columns);
+  if (controlColumns.length) return controlColumns;
+  return safeArray(chartPayload?.columns);
+}
+
+function renderChartControls(chartPayload) {
+  const controlsContainer = document.createElement("section");
+  controlsContainer.className = "chart-controls-shell";
+  controlsContainer.setAttribute("aria-label", "Chart controls");
+
+  const selectableColumns = resolveChartControlColumns(chartPayload);
+  const selectedY = chartPayload?.controls?.selected_y || "";
+  const selectedColor = chartPayload?.controls?.selected_color || "";
+  const selectedChartType = chartPayload?.controls?.selected_chart_type || "";
+  const chartTypes = safeArray(chartPayload?.controls?.chart_types).length
+    ? safeArray(chartPayload?.controls?.chart_types)
+    : ["bar", "line", "scatter"];
+
+  const canControl = selectableColumns.length > 0;
+  const disabledAttr = canControl ? "" : "disabled";
+  const helperText = canControl
+    ? "Choose axes/style and apply to redraw the chart."
+    : "컨트롤 가능한 컬럼 정보가 없어 차트 설정을 변경할 수 없습니다.";
+
+  const columnOptions = selectableColumns.length
+    ? selectableColumns
+        .map(
+          (column) =>
+            `<option value="${escapeHtml(column)}" ${selectedY === column ? "selected" : ""}>${escapeHtml(column)}</option>`,
+        )
+        .join("")
+    : '<option value="">No columns available</option>';
+
+  const colorOptions = selectableColumns.length
+    ? ['<option value="">None</option>']
+        .concat(
+          selectableColumns.map(
+            (column) =>
+              `<option value="${escapeHtml(column)}" ${selectedColor === column ? "selected" : ""}>${escapeHtml(column)}</option>`,
+          ),
+        )
+        .join("")
+    : '<option value="">No columns available</option>';
+
+  const chartTypeOptions = chartTypes
+    .map(
+      (type) =>
+        `<option value="${escapeHtml(type)}" ${selectedChartType === type ? "selected" : ""}>${escapeHtml(type)}</option>`,
+    )
+    .join("");
+
+  controlsContainer.innerHTML = `
+    <div class="chart-controls-grid">
+      <label class="chart-control-field">
+        <span>y</span>
+        <select data-chart-control="y" aria-label="Chart Y axis column" ${disabledAttr}>
+          ${columnOptions}
+        </select>
+      </label>
+      <label class="chart-control-field">
+        <span>color</span>
+        <select data-chart-control="color" aria-label="Chart color grouping column" ${disabledAttr}>
+          ${colorOptions}
+        </select>
+      </label>
+      <label class="chart-control-field">
+        <span>chart type</span>
+        <select data-chart-control="chart-type" aria-label="Chart type" ${disabledAttr}>
+          ${chartTypeOptions}
+        </select>
+      </label>
+      <div class="chart-control-actions" aria-label="Chart control actions">
+        <button class="table-option" type="button" data-chart-action="apply" ${disabledAttr}>Apply</button>
+        <button class="table-option" type="button" data-chart-action="reset" ${disabledAttr}>Reset</button>
+      </div>
+    </div>
+    <p class="chart-control-help ${canControl ? "" : "is-disabled"}">${escapeHtml(helperText)}</p>
+  `;
+
+  chartView.appendChild(controlsContainer);
+}
+
 function renderChart(chartPayload) {
   if (!chartPayload || !chartPayload.figure) {
     chartView.innerHTML = "";
@@ -557,6 +640,8 @@ function renderChart(chartPayload) {
       ${chartPayload.source === "manual" ? '<span class="status-badge-pill">Manual overrides applied</span>' : ""}
     </div>
   `;
+  renderChartControls(chartPayload);
+
   const plotContainer = document.createElement("div");
   plotContainer.id = "plot-container";
   plotContainer.className = "plot-container";
@@ -683,6 +768,37 @@ function requestDatasetDeletion(datasetKey) {
   });
 }
 
+function buildChartOptionsPayload(overrides = {}) {
+  const currentChart = state.ui?.chart && typeof state.ui.chart === "object" ? state.ui.chart : {};
+  const merged = { ...currentChart, ...overrides };
+
+  const normalized = {
+    chart_type: typeof merged.chart_type === "string" ? merged.chart_type : "",
+    x: typeof merged.x === "string" ? merged.x : "",
+    y: typeof merged.y === "string" ? merged.y : null,
+    color: typeof merged.color === "string" ? merged.color : null,
+    aggregation: typeof merged.aggregation === "string" ? merged.aggregation : null,
+    top_n: Number.isFinite(Number(merged.top_n)) ? Number.parseInt(merged.top_n, 10) : null,
+    sort_desc: typeof merged.sort_desc === "boolean" ? merged.sort_desc : true,
+    title: typeof merged.title === "string" ? merged.title : null,
+  };
+
+  if (normalized.top_n !== null && normalized.top_n <= 0) {
+    normalized.top_n = null;
+  }
+
+  return normalized;
+}
+
+function notifyChartOptionsChanged(overrides = {}) {
+  const payload = buildChartOptionsPayload(overrides);
+  if (!payload.chart_type || !payload.x) return;
+  sendMessageToChainlit({
+    type: "CHART_OPTIONS_CHANGED",
+    payload,
+  });
+}
+
 window.addEventListener("message", (event) => {
   if (event.origin !== window.location.origin) return;
 
@@ -786,6 +902,44 @@ tableView.addEventListener("change", (event) => {
   const pageSize = Number.parseInt(event.target.value, 10);
   if (!Number.isFinite(pageSize) || pageSize <= 0) return;
   requestTablePageSize(pageSize);
+});
+
+chartView.addEventListener("change", (event) => {
+  const optionName = event.target?.dataset?.chartOption;
+  if (!optionName) return;
+
+  let value = event.target.value;
+  if (event.target.type === "checkbox") {
+    value = Boolean(event.target.checked);
+  }
+  if (optionName === "top_n") {
+    value = value === "" ? null : Number.parseInt(value, 10);
+  }
+  if (["y", "color", "aggregation", "title"].includes(optionName) && value === "") {
+    value = null;
+  }
+
+  notifyChartOptionsChanged({ [optionName]: value });
+};
+                           
+chartView.addEventListener("click", (event) => {
+  const actionElement = event.target?.closest?.("[data-chart-action]");
+  const action = actionElement?.dataset?.chartAction;
+  if (!action) return;
+
+  if (action === "apply") {
+    const payload = {
+      y: chartView.querySelector('[data-chart-control="y"]')?.value || null,
+      color: chartView.querySelector('[data-chart-control="color"]')?.value || null,
+      chart_type: chartView.querySelector('[data-chart-control="chart-type"]')?.value || null,
+    };
+    sendMessageToChainlit({ type: "CHART_CONTROLS_APPLY", payload });
+    return;
+  }
+
+  if (action === "reset") {
+    sendMessageToChainlit({ type: "CHART_CONTROLS_RESET", payload: {} });
+  }
 });
 
 syncButton.addEventListener("click", requestSync);
